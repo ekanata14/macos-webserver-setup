@@ -23,27 +23,6 @@ cd /opt/homebrew/etc/nginx/nginx.conf
 
 nano nginx.conf
 
-### Set up your virtual host server
-server {
-    listen 80;
-    server_name myproject.local;
-    root /Users/yourusername/projects/myproject/public;
-
-    index index.html index.htm index.php;
-
-    location / {
-        try_files $uri $uri/ =404;
-    }
-
-    location ~ \.php$ {
-        include /usr/local/etc/nginx/fastcgi_params;
-        fastcgi_pass 127.0.0.1:9000;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-    }
-}
-
-
 ### Test Configuration
 nginx -t
 
