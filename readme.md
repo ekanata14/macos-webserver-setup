@@ -1,120 +1,154 @@
-# Welcome to macos webserver setup
-I just share my experience when setting up webserver for macos
-It's kinda fun, but also struggling, lmao jk.
+Berikut adalah ringkasan lengkap (Cheatsheet) untuk setup environment Web Development Native di macOS (PHP, Node, MySQL) menggantikan Docker.
 
-## Install homebrew first
+Anda bisa menyalin ini ke dalam file `SETUP.md` atau Notion Anda untuk referensi di masa depan.
+
+---
+
+# macOS Web Development Environment Setup (Native)
+
+Panduan ini menghapus Docker dan menggantinya dengan instalasi native menggunakan Homebrew, NVM, dan Shivam Mathur PHP Tap (Support PHP 8.1 - 8.5).
+
+### 1. Uninstall Docker (Deep Clean)
+
+Jalankan di Terminal untuk menghapus aplikasi dan semua data container/image.
+
+```bash
+# 1. Hapus App & Binary
+rm -rf /Applications/Docker.app
+rm -f /usr/local/bin/docker /usr/local/bin/docker-compose
+rm -f /usr/local/bin/docker-machine /usr/local/bin/docker-credential-desktop
+rm -f /usr/local/bin/docker-credential-ecr-login /usr/local/bin/docker-credential-osxkeychain
+rm -f /usr/local/bin/hub-tool /usr/local/bin/hyperkit /usr/local/bin/kubectl.docker /usr/local/bin/vpnkit
+
+# 2. Hapus Data & Library (Penting untuk free space)
+rm -rf ~/Library/Group\ Containers/group.com.docker
+rm -rf ~/Library/Containers/com.docker.docker
+rm -rf ~/.docker
+
+```
+
+### 2. Install Package Manager & Frontend Stack
+
+Menggunakan **NVM** untuk Node.js agar tidak ada masalah permission (hindari `brew install node`).
+
+```bash
+# Install Homebrew (jika belum ada)
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-brew --version
+# Install NVM (Node Version Manager)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash
 
-## Install Nginx (Use NGINX Instead lol)
-brew install nginx
+# Restart Terminal, lalu install Node LTS
+nvm install --lts
+nvm use --lts
 
-sudo nginx
+```
 
-### Check NGINX
-http://localhost
+### 3. PHP Ultimate Setup (8.1 - 8.5 + Extensions)
 
-### Stop NGINX
-sudo nginx -s stop
+Script ini akan menginstall semua versi PHP yang diminta beserta extension penting (Redis & Imagick). Extension standar (BCMath, GD, Intl) sudah termasuk bawaan.
 
-### NGINX Configuration file
-cd /opt/homebrew/etc/nginx/nginx.conf
+**Copy-paste script ini ke Terminal:**
 
-nano nginx.conf
+```bash
+# Add Repositories
+brew tap shivammathur/php
+brew tap shivammathur/extensions
 
-### Test Configuration
-nginx -t
+# Install PHP 8.1 s/d 8.5 dan Extensions
+VERSIONS=("8.1" "8.2" "8.3" "8.4" "8.5")
+for val in ${VERSIONS[@]}; do
+    echo "Installing PHP $val..."
+    brew install shivammathur/php/php@$val
+    brew install shivammathur/extensions/redis@$val
+    brew install shivammathur/extensions/imagick@$val
+done
 
-### Reload NGINX
-sudo nginx -s reload
+# Install Composer
+brew install composer
 
-## Install PHP
-brew install php
+# Link PHP 8.5 sebagai default
+brew unlink php 2>/dev/null
+brew link --overwrite --force shivammathur/php/php@8.5
 
-### Start PHP
-brew services start php
+```
 
-### Verify PHP-FPM running on port 9000
-lsof -P -n -i :9000
+### 4. Setup Database (MySQL & Redis)
 
-## Install Composer
-curl -sS https://getcomposer.org/installer | php
+Install database secara native service.
 
-### Move Composer
-sudo mv composer.phar /usr/local/bin/composer
+```bash
+# Install Services
+brew install mysql redis
 
-### Check Composer Version
-composer --version
-
-
-## Install NVM
-brew install nvm
-
-### Create directory for nvm
-mkdir ~/.nvm
-
-
-### Load ZSH and bashrc
-export NVM_DIR="$HOME/.nvm"
-[ -s "/opt/homebrew/opt/nvm/nvm.sh" ] && \. "/opt/homebrew/opt/nvm/nvm.sh"  # This loads nvm
-
-
-### Reload Terminal
-source ~/.zshrc
-
-### Check NVM Version
-nvm --version
-
-### Install latest or w version
-nvm install (Choose One)
-nvm install 22 (Choose One)
-
-## Install MYSQL
-brew install mysql
-
-### Start MySQL Service
+# Jalankan Service (Auto-start saat login)
 brew services start mysql
+brew services start redis
 
-## Install PostgreSQL
-brew install postgresql
+# Secure Installation (Optional untuk local dev)
+mysql_secure_installation
 
-### Start PostgreSQL
-brew services start postgresql
+```
 
-## Install phpMyAdmin
-brew install phpmyadmin
+#### Buat User Database Baru
 
-### Setup phpMyAdmin
-Follow the instructions below
+Masuk ke MySQL (`mysql -u root -p`) dan jalankan query ini:
 
-### Config phpMyAdmin
-nano /opt/homebrew/etc/nginx/nginx.conf
+```sql
+-- Ganti 'app_user' dan 'password' sesuai keinginan
+CREATE USER 'app_user'@'localhost' IDENTIFIED BY 'password';
+GRANT ALL PRIVILEGES ON *.* TO 'app_user'@'localhost' WITH GRANT OPTION;
+FLUSH PRIVILEGES;
+EXIT;
 
-### Add this config
-server {
-    listen 8000;
-    server_name localhost;
+```
 
-    root /opt/homebrew/share/phpmyadmin;
-    index index.php index.html index.htm;
+### 5. Utilities: PHP Switcher
 
-    location / {
-        try_files $uri $uri/ =404;
-    }
+Agar mudah berpindah versi PHP, tambahkan fungsi ini ke file config shell Anda (`~/.zshrc` atau `~/.bashrc`).
 
-    location ~ \.php$ {
-        include fastcgi_params;
-        fastcgi_pass 127.0.0.1:9000;
-        fastcgi_index index.php;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-    }
+**Buka config:** `nano ~/.zshrc`
+**Paste di paling bawah:**
 
-    location ~ /\.ht {
-        deny all;
-    }
+```bash
+# PHP Switcher function
+# Usage: phpv 8.1
+phpv() {
+    brew unlink php
+    brew link --overwrite --force "shivammathur/php/php@$1"
+    php -v
+    composer dump-autoload
 }
 
+```
 
+**Simpan & Reload:** `source ~/.zshrc`
 
+### 6. Serving Sites (Laravel Valet)
 
+Opsional, tapi sangat direkomendasikan untuk pengguna Laravel.
+
+```bash
+composer global require laravel/valet
+valet install
+
+# Setup folder project
+mkdir ~/Sites
+cd ~/Sites
+valet park
+
+```
+
+*Sekarang semua folder di dalam `~/Sites` bisa diakses via browser di `http://nama-folder.test*`
+
+---
+
+### Cek Final
+
+Pastikan semua berjalan dengan menjalankan perintah ini:
+
+* **PHP:** `php -v`
+* **Node:** `node -v`
+* **Composer:** `composer -V`
+* **MySQL:** `mysqladmin -u app_user -p status`
+* **Redis:** `redis-cli ping` (Harus membalas "PONG")
