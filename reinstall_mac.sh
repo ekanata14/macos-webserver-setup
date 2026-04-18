@@ -1,0 +1,156 @@
+cat << 'EOF' > reinstall_mac_stack.sh
+#!/bin/bash
+set -e
+
+# Warna untuk output
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}=== Memulai Instal Ulang macOS PHP Development Stack ===${NC}"
+
+# 1. Cek & Install Homebrew
+if ! command -v brew &> /dev/null; then
+    echo -e "${BLUE}[1/9] Menginstal Homebrew...${NC}"
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    
+    # Setup Path untuk Apple Silicon jika perlu
+    if [[ $(uname -m) == 'arm64' ]]; then
+        (echo; echo 'eval "$(/opt/homebrew/bin/brew shellenv)"') >> /Users/$USER/.zprofile
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
+else
+    echo -e "${GREEN}[1/9] Homebrew sudah terinstall.${NC}"
+fi
+
+echo -e "${BLUE}[2/9] Update Homebrew...${NC}"
+brew update
+
+# 2. Install & Reset PHP 8.4
+echo -e "${BLUE}[3/9] Menginstal/Reset PHP 8.4...${NC}"
+brew tap shivammathur/php
+brew install shivammathur/php/php@8.4
+brew link --overwrite --force php@8.4
+
+# Start/Restart PHP Service
+brew services restart php@8.4
+
+# 3. Install & Reset Nginx
+echo -e "${BLUE}[4/9] Menginstal/Reset Nginx...${NC}"
+brew install nginx
+
+# Tentukan Path Homebrew (Intel vs Apple Silicon)
+BREW_PREFIX=$(brew --prefix)
+
+# Set Web Root ke folder code di Home direktori
+WEB_ROOT="$HOME/code"
+echo -e "${YELLOW}[INFO] Menyiapkan Web Root di $WEB_ROOT...${NC}"
+mkdir -p "$WEB_ROOT"
+
+# Konfigurasi Nginx
+echo -e "${BLUE}[INFO] Membuat konfigurasi Nginx PHP (Anti-Forbidden)...${NC}"
+mkdir -p "$BREW_PREFIX/etc/nginx/servers"
+
+# Menulis ulang file konfigurasi
+cat <<NGINX_CONF > "$BREW_PREFIX/etc/nginx/servers/laravel-stack.conf"
+server {
+    listen 8080;
+    server_name localhost;
+    root $WEB_ROOT;
+
+    # autoindex on adalah KUNCI agar tidak ada error 403 Forbidden 
+    # saat mengakses folder yang tidak memiliki file index.php
+    autoindex on;
+    autoindex_exact_size off;
+    autoindex_localtime on;
+
+    index index.php index.html index.htm;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \.php$ {
+        fastcgi_pass 127.0.0.1:9000;
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+}
+NGINX_CONF
+
+# Restart Nginx untuk menerapkan konfigurasi baru
+brew services restart nginx
+
+# 4. Install & Reset MySQL
+echo -e "${BLUE}[5/9] Menginstal/Reset MySQL...${NC}"
+brew install mysql
+brew services restart mysql
+
+# 5. Install NVM (Node Version Manager)
+echo -e "${BLUE}[6/9] Menginstal NVM...${NC}"
+brew install nvm
+mkdir -p ~/.nvm
+
+# Tambahkan ke zshrc jika belum ada
+if ! grep -q "nvm.sh" ~/.zshrc; then
+  echo 'export NVM_DIR="$HOME/.nvm"' >> ~/.zshrc
+  echo "[ -s \"$BREW_PREFIX/opt/nvm/nvm.sh\" ] && \. \"$BREW_PREFIX/opt/nvm/nvm.sh\"" >> ~/.zshrc
+  echo "[ -s \"$BREW_PREFIX/opt/nvm/etc/bash_completion.d/nvm\" ] && \. \"$BREW_PREFIX/opt/nvm/etc/bash_completion.d/nvm\"" >> ~/.zshrc
+fi
+
+# Load NVM sementara untuk sesi ini
+export NVM_DIR="$HOME/.nvm"
+[ -s "$BREW_PREFIX/opt/nvm/nvm.sh" ] && \. "$BREW_PREFIX/opt/nvm/nvm.sh"
+nvm install node # Install latest node
+
+# 6. Install Composer
+echo -e "${BLUE}[7/9] Menginstal Composer...${NC}"
+brew install composer
+
+# 7. Install phpMyAdmin (Reinstall)
+echo -e "${BLUE}[8/9] Menginstal ulang phpMyAdmin...${NC}"
+PMA_VER="5.2.1"
+cd /tmp
+curl -O -L https://files.phpmyadmin.net/phpMyAdmin/${PMA_VER}/phpMyAdmin-${PMA_VER}-all-languages.zip
+unzip -q phpMyAdmin-${PMA_VER}-all-languages.zip
+# Hapus instalasi PMA yang lama jika ada
+rm -rf "$WEB_ROOT/phpmyadmin"
+mv phpMyAdmin-${PMA_VER}-all-languages "$WEB_ROOT/phpmyadmin"
+rm phpMyAdmin-${PMA_VER}-all-languages.zip
+
+# Buat config file sederhana untuk PMA
+cp "$WEB_ROOT/phpmyadmin/config.sample.inc.php" "$WEB_ROOT/phpmyadmin/config.inc.php"
+RANDOM_SECRET=$(openssl rand -base64 32)
+sed -i '' "s/\['blowfish_secret'\] = '';/\['blowfish_secret'\] = '$RANDOM_SECRET';/" "$WEB_ROOT/phpmyadmin/config.inc.php"
+sed -i '' "s/\['AllowNoPassword'\] = false;/\['AllowNoPassword'\] = true;/" "$WEB_ROOT/phpmyadmin/config.inc.php"
+
+# 8. Set Permissions
+echo -e "${BLUE}[9/9] Mengatur Permission (Mencegah Forbidden)...${NC}"
+# Memberikan akses rwx untuk user, rx untuk group dan others
+chmod -R 755 "$WEB_ROOT"
+# Memastikan direktori home Anda sendiri bisa dibaca oleh service Nginx
+chmod a+x "$HOME"
+
+# Buat info.php untuk tes
+echo "<?php phpinfo(); ?>" > "$WEB_ROOT/info.php"
+
+echo "------------------------------------------------"
+echo -e "${GREEN}Instal Ulang & Konfigurasi Selesai!${NC}"
+echo "------------------------------------------------"
+echo "PHP Version      : $(php -v | head -n 1)"
+echo "Nginx            : Running on port 8080"
+echo "MySQL            : Running (User: root, Pass: [kosong])"
+echo "Composer         : $(composer --version | head -n 1)"
+echo "Web Root         : $WEB_ROOT"
+echo "------------------------------------------------"
+echo -e "${GREEN}Akses Dashboard (Buka di Browser):${NC}"
+echo "1. Folder Root   : http://localhost:8080/    <-- (Tidak akan Forbidden lagi)"
+echo "2. Cek PHP       : http://localhost:8080/info.php"
+echo "3. phpMyAdmin    : http://localhost:8080/phpmyadmin"
+echo "------------------------------------------------"
+echo "Catatan: Jalankan perintah 'source ~/.zshrc' jika ingin menggunakan 'nvm' di terminal ini."
+EOF
+
+chmod +x reinstall_mac_stack.sh && ./reinstall_mac_stack.sh
